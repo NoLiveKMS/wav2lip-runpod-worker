@@ -19,9 +19,9 @@ RUN sed -i 's/^sklearn$/scikit-learn/' requirements.txt || true
 
 # Install a modern, compatible dependency set for Wav2Lip inference
 RUN pip3 install --no-cache-dir \
-    "numpy<2" \
+    "numpy<1.24" \
+    "librosa==0.9.1" \
     scipy \
-    librosa \
     numba \
     resampy \
     soundfile \
@@ -37,7 +37,12 @@ RUN mkdir -p checkpoints && \
     echo "Downloading wav2lip_gan.pth from Hugging Face..." && \
     curl -L --retry 10 --retry-delay 5 --fail \
     -o checkpoints/wav2lip_gan.pth \
-    https://huggingface.co/Nekochu/Wav2Lip/resolve/main/wav2lip_gan.pth
+    https://huggingface.co/Nekochu/Wav2Lip/resolve/main/wav2lip_gan.pth && \
+    mkdir -p face_detection/detection/sfd && \
+    echo "Downloading s3fd.pth face detector weights..." && \
+    curl -L --retry 10 --retry-delay 5 --fail \
+    -o face_detection/detection/sfd/s3fd.pth \
+    https://huggingface.co/gmk123/wav2lip/resolve/main/s3fd-619a316812.pth
 
 COPY handler.py /workspace/Wav2Lip/handler.py
 

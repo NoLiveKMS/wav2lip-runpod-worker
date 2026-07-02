@@ -36,13 +36,15 @@ def diag():
 
 diag()
 
-def download(url: str, out_path: Path):
+def download(url: str, out_path: Path) -> str:
     r = requests.get(url, stream=True, timeout=120)
     r.raise_for_status()
+    content_type = r.headers.get("Content-Type", "")
     with open(out_path, "wb") as f:
         for chunk in r.iter_content(chunk_size=1024 * 1024):
             if chunk:
                 f.write(chunk)
+    return content_type
 
 def get_audio_duration_seconds(audio_path: Path) -> float:
     """
@@ -65,37 +67,56 @@ def get_audio_duration_seconds(audio_path: Path) -> float:
 def handler(job):
     inp = job.get("input", {})
 
-    image_url = inp.get("image_url")
+    face_url = inp.get("face_url") or inp.get("video_url") or inp.get("image_url")
     audio_url = inp.get("audio_url")
     fps = int(inp.get("fps", 25))
     pads = inp.get("pads", [0, 10, 0, 0])
     resize_factor = int(inp.get("resize_factor", 1))
 
-    if not image_url or not audio_url:
-        return {"error": "Missing image_url or audio_url"}
+    if not face_url or not audio_url:
+        return {"error": "Missing face_url (or video_url/image_url) or audio_url"}
 
     job_id = str(uuid.uuid4())[:8]
-    face_path = INPUT_DIR / f"face_{job_id}.jpg"
+    face_path_temp = INPUT_DIR / f"face_{job_id}_temp"
     audio_path = INPUT_DIR / f"audio_{job_id}.wav"
-    temp_face_video = INPUT_DIR / f"face_{job_id}.mp4"
     out_path = OUTPUT_DIR / f"out_{job_id}.mp4"
 
     # Download inputs
-    download(image_url, face_path)
+    face_content_type = download(face_url, face_path_temp)
     download(audio_url, audio_path)
 
-    # Make the still image into a video matching the audio length
-    duration = get_audio_duration_seconds(audio_path)
+    # Determine extension
+    ext = Path(face_url.split("?")[0]).suffix.lower()
+    if not ext:
+        if "video" in face_content_type.lower():
+            ext = ".mp4"
+        elif "png" in face_content_type.lower():
+            ext = ".png"
+        else:
+            ext = ".jpg"
 
-    subprocess.check_call([
-        "ffmpeg", "-y",
-        "-loop", "1",
-        "-i", str(face_path),
-        "-t", str(duration),
-        "-r", str(fps),
-        "-vf", "format=yuv420p",
-        str(temp_face_video)
-    ])
+    face_path = INPUT_DIR / f"face_{job_id}{ext}"
+    shutil.move(face_path_temp, face_path)
+
+    # Check if input is a video or a static image
+    is_video = "video" in face_content_type.lower() or ext in [".mp4", ".avi", ".mov", ".mkv", ".webm"]
+
+    if is_video:
+        temp_face_video = face_path
+    else:
+        # Make the still image into a video matching the audio length
+        temp_face_video = INPUT_DIR / f"face_{job_id}.mp4"
+        duration = get_audio_duration_seconds(audio_path)
+
+        subprocess.check_call([
+            "ffmpeg", "-y",
+            "-loop", "1",
+            "-i", str(face_path),
+            "-t", str(duration),
+            "-r", str(fps),
+            "-vf", "format=yuv420p",
+            str(temp_face_video)
+        ])
 
     # Run inference using the current interpreter (never calls "python")
     inference_path = WAV2LIP_DIR / "inference.py"
